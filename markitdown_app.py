@@ -474,6 +474,7 @@ def convert_image(path: str, name: str, s: dict, prog: StageProgress) -> fh.Conv
             try:
                 model, tokenizer = get_unlimited_ocr_model(prog)   # instant if warmed at startup
                 texts = []
+                tok_total, sec_total = 0, 0.0
                 n = len(pages)
                 for i, p in enumerate(pages, 1):
                     # Single image: stages land at 20/60/85%. Multi-page image:
@@ -482,9 +483,13 @@ def convert_image(path: str, name: str, s: dict, prog: StageProgress) -> fh.Conv
                         cb = prog.update
                     else:
                         cb = lambda pct, msg, i=i: prog.update((i - 1 + pct / 100) / n * 85, f"Page {i} of {n} — {msg}")
-                    texts.append(unlimited_ocr.ocr_image(model, tokenizer, p, mode=s["uocr_mode"], progress=cb))
+                    det = unlimited_ocr.ocr_image_detailed(model, tokenizer, p, mode=s["uocr_mode"], progress=cb)
+                    texts.append(det["markdown"])
+                    tok_total += det["stats"]["generated_tokens"]
+                    sec_total += det["stats"]["seconds"]
                 md = fh.join_pages(texts, name, f"Parsed Image: {name}", f"Parsed by Unlimited-OCR ({s['uocr_mode']} mode, local GPU)")
-                return fh.ConversionResult(md, name, "image")
+                speed = unlimited_ocr.format_stats(unlimited_ocr._gen_stats(tok_total, sec_total))
+                return fh.ConversionResult(md, name, "image", notes=[f"🧠 Unlimited-OCR ({s['uocr_mode']} mode) — ⏱️ {speed}"])
             except Exception as uocr_error:
                 prog.done()
                 st.warning(f"⚠️ Unlimited-OCR failed: {uocr_error}. Falling back to OCR...")
@@ -539,7 +544,8 @@ def convert_document(path: str, name: str, s: dict, prog: StageProgress) -> tupl
                 md_path, json_path = unlimited_ocr.save_outputs(final_md, sidecar, name)
                 note = (
                     f"🧠 Parsed by Unlimited-OCR — {sidecar['page_count']} page(s), {sidecar['table_count']} table(s), "
-                    f"blocks: {sidecar['block_type_counts']}. Saved to output/: {os.path.basename(md_path)}, {os.path.basename(json_path)}"
+                    f"blocks: {sidecar['block_type_counts']}. ⏱️ {unlimited_ocr.format_stats(res['stats'])}. "
+                    f"Saved to output/: {os.path.basename(md_path)}, {os.path.basename(json_path)}"
                 )
                 return fh.ConversionResult(final_md, name, "document", sidecar=sidecar, notes=[note]), [md_path, json_path], True
             except Exception as uocr_error:

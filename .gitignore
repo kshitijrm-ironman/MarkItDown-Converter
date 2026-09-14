@@ -7,10 +7,12 @@ __pycache__/
 .pytest_cache/
 
 # ---- App runtime artefacts ----
-output/                 # Unlimited-OCR .md/.json sidecars written per conversion
+# Unlimited-OCR .md/.json sidecars written per conversion
+output/
 *.log
 *.output
-.streamlit/secrets.toml # never commit API keys
+# never commit API keys
+.streamlit/secrets.toml
 .env
 
 # ---- Model weights & caches (downloaded on demand, several GB) ----

@@ -27,6 +27,7 @@ import os
 import re
 import tempfile
 import threading as _threading
+import time as _time
 from html.parser import HTMLParser
 
 MODEL_ID = "baidu/Unlimited-OCR"
@@ -133,6 +134,23 @@ def _warmup_image(out_dir: str) -> str:
     return path
 
 
+def _from_pretrained(loader, **kwargs):
+    """
+    Load from the local Hugging Face cache first; only contact the Hub when the
+    files are not cached yet (the one-time ~6.7 GB download).
+
+    Without `local_files_only=True`, transformers makes a HEAD request per file
+    to check for updates even when everything is cached. With no internet those
+    requests retry for minutes (measured: config + tokenizer alone took ~2.5 min
+    before falling back to the cache), which is why the app looked stuck offline.
+    """
+    try:
+        return loader(MODEL_ID, local_files_only=True, **kwargs)
+    except OSError:
+        # Not in the cache yet (first run) — download from the Hub.
+        return loader(MODEL_ID, **kwargs)
+
+
 def warm_unlimited_ocr():
     """
     Generator that loads Unlimited-OCR onto the GPU while yielding progress.
@@ -162,14 +180,14 @@ def warm_unlimited_ocr():
         import torch
         from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-        config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
+        config = _from_pretrained(AutoConfig.from_pretrained, trust_remote_code=True)
 
         yield WARMUP_STAGES[1][0], WARMUP_STAGES[1][1], None
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+        tokenizer = _from_pretrained(AutoTokenizer.from_pretrained, trust_remote_code=True)
 
         yield WARMUP_STAGES[2][0], WARMUP_STAGES[2][1], None
-        model = AutoModel.from_pretrained(
-            MODEL_ID,
+        model = _from_pretrained(
+            AutoModel.from_pretrained,
             config=config,
             trust_remote_code=True,
             use_safetensors=True,
@@ -218,7 +236,8 @@ def warm_unlimited_ocr():
 
 def load_model(progress=None):
     """
-    Download (first time, ~6.7 GB) and load the model onto the GPU.
+    Download (first time, ~6.7 GB) and load the model onto the GPU. After the
+    first run it loads purely from the local cache, so it works offline.
     Returns (model, tokenizer). Cached process-wide after the first call.
     `progress(percent, message)` is called for each warm-up stage if given.
     """
@@ -432,6 +451,7 @@ def build_sidecar(details: dict, source_name: str) -> dict:
         "parsed_page_count": len(details["pages"]),
         "block_type_counts": type_counts,
         "table_count": len(all_tables),
+        "generation": details.get("stats"),
         "tables": all_tables,
         "pages": pages_out,
         "raw_bboxes": raw_bboxes,
@@ -487,9 +507,27 @@ IMAGE_STAGES = (
 )
 
 
-def ocr_image(model, tokenizer, image_path: str, mode: str = "gundam", progress=None) -> str:
+def _gen_stats(tokens: int, seconds: float) -> dict:
+    """Generation-speed summary: {generated_tokens, seconds, tokens_per_sec}."""
+    return {
+        "generated_tokens": int(tokens),
+        "seconds": round(seconds, 1),
+        "tokens_per_sec": round(tokens / seconds, 1) if seconds > 0 else 0.0,
+    }
+
+
+def format_stats(stats: dict) -> str:
+    """One-line human-readable speed read-out for the UI."""
+    return (f"{stats['generated_tokens']:,} tokens generated in {stats['seconds']:.1f} s "
+            f"({stats['tokens_per_sec']:.1f} tok/s)")
+
+
+def ocr_image_detailed(model, tokenizer, image_path: str, mode: str = "gundam", progress=None) -> dict:
     """
     Parse a single image to Markdown.
+    Returns {"markdown", "stats"}; `stats` is a generation-speed summary
+    (token count is measured by re-tokenising the output, since `infer()`
+    only returns text).
     `progress(percent, message)` is called at each `IMAGE_STAGES` step if given.
     """
     if mode not in IMAGE_MODES:
@@ -499,6 +537,7 @@ def ocr_image(model, tokenizer, image_path: str, mode: str = "gundam", progress=
         _report(progress, *IMAGE_STAGES[0])
         png = _to_rgb_png(image_path, work)
         _report(progress, *IMAGE_STAGES[1])
+        t0 = _time.perf_counter()
         raw = model.infer(
             tokenizer,
             prompt="<image>document parsing.",
@@ -511,8 +550,19 @@ def ocr_image(model, tokenizer, image_path: str, mode: str = "gundam", progress=
             save_results=False,
             **IMAGE_MODES[mode],
         )
+        seconds = _time.perf_counter() - t0
     _report(progress, *IMAGE_STAGES[2])
-    return clean_output(raw or "")
+    raw = raw or ""
+    try:
+        n_tokens = len(tokenizer.encode(raw, add_special_tokens=False))
+    except Exception:
+        n_tokens = 0
+    return {"markdown": clean_output(raw), "stats": _gen_stats(n_tokens, seconds)}
+
+
+def ocr_image(model, tokenizer, image_path: str, mode: str = "gundam", progress=None) -> str:
+    """Markdown-only convenience wrapper around `ocr_image_detailed()`."""
+    return ocr_image_detailed(model, tokenizer, image_path, mode=mode, progress=progress)["markdown"]
 
 
 def pdf_to_images(pdf_path: str, out_dir: str, dpi: int = PDF_DPI) -> list[str]:
@@ -564,6 +614,8 @@ def ocr_pdf_detailed(
       * 90%  "Assembling output..."
     """
     page_records: list[dict] = []
+    total_tokens = 0
+    gen_seconds = 0.0
     with tempfile.TemporaryDirectory(prefix="uocr_pdf_") as work:
         _report(progress, 10, "Rasterizing PDF pages...")
         pages = pdf_to_images(pdf_path, work, dpi=dpi)
@@ -576,7 +628,8 @@ def ocr_pdf_detailed(
             batch = pages[start : start + pages_per_call]
             end = min(start + len(batch), total)
             _report(progress, page_pct(start), f"Processing page {start + 1} of {total}...")
-            outputs, _ntokens = model.infer_multi(
+            t0 = _time.perf_counter()
+            outputs, n_tokens = model.infer_multi(
                 tokenizer,
                 prompt="<image>Multi page parsing.",
                 image_files=batch,
@@ -587,6 +640,8 @@ def ocr_pdf_detailed(
                 ngram_window=NGRAM_WINDOW_MULTI,
                 save_results=False,
             )
+            gen_seconds += _time.perf_counter() - t0
+            total_tokens += int(n_tokens or 0)
             raw_chunks = (outputs or "").split("<PAGE>")
             if len(raw_chunks) != len(batch):
                 # Model didn't return exactly one chunk per page; keep the
@@ -603,6 +658,7 @@ def ocr_pdf_detailed(
         "page_count": total,
         "dpi": dpi,
         "pages": page_records,
+        "stats": _gen_stats(total_tokens, gen_seconds),   # model generation only (excludes rasterising)
     }
 
 
