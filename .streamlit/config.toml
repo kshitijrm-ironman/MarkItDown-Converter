@@ -1,0 +1,10 @@
+# Streamlit settings for the MarkItDown app.
+# NOTE: server.port is deliberately NOT set here - "Run MarkItDown.bat" picks a
+# free port at launch and passes it via --server.port. Putting a port in this
+# file would fight that dynamic picker.
+
+[server]
+headless = true
+
+[theme]
+base = "dark"

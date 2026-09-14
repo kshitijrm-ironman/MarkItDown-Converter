@@ -1,0 +1,34 @@
+# ---- Python / virtualenv ----
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---- App runtime artefacts ----
+output/                 # Unlimited-OCR .md/.json sidecars written per conversion
+*.log
+*.output
+.streamlit/secrets.toml # never commit API keys
+.env
+
+# ---- Model weights & caches (downloaded on demand, several GB) ----
+models/
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.pth
+
+# ---- Legacy launchers superseded by "Run MarkItDown.bat" ----
+quicklaunch.bat
+First Time run_app.bat
+
+# ---- OS / editor noise ----
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+.claude/

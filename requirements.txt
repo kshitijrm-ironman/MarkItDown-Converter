@@ -1,0 +1,25 @@
+# Base dependencies for the MarkItDown app.
+# Optional GPU extras (Unlimited-OCR + faster-whisper) live in requirements-ocr.txt.
+streamlit
+markitdown[all]
+wikipedia-api
+pytesseract
+pillow
+ollama
+anthropic
+openai
+requests
+playwright
+youtube-transcript-api>=1.2.4   # 1.0.x breaks on YouTube's 2025 caption format (ParseError)
+
+# File-type handlers (file_handlers.py)
+python-pptx          # .pptx
+pandas               # .xlsx / .csv
+openpyxl             # xlsx engine for pandas
+pillow-heif          # .heic / .heif images
+pymupdf              # PDF preview: rasterise pages to PNG (Chrome blocks PDF iframes)
+
+# Output formats (output_formatter.py)
+markdown             # .html (and the base for .txt / .pdf)
+python-docx          # .docx
+fpdf2                # .pdf
