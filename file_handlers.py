@@ -28,6 +28,8 @@ from html.parser import HTMLParser
 
 import requests
 
+import doc_password
+
 # --------------------------------------------------------------------------- #
 # Extension registry
 # --------------------------------------------------------------------------- #
@@ -390,7 +392,8 @@ def convert_email(path: str, name: str) -> ConversionResult:
 # --------------------------------------------------------------------------- #
 # Archives (.zip)
 # --------------------------------------------------------------------------- #
-def convert_archive(path: str, name: str, convert_fn, max_files: int = MAX_ARCHIVE_FILES, _depth: int = 0) -> ConversionResult:
+def convert_archive(path: str, name: str, convert_fn, max_files: int = MAX_ARCHIVE_FILES, _depth: int = 0,
+                    password: str = "") -> ConversionResult:
     """
     Extract a .zip and convert each member with `convert_fn(member_path, member_name) -> ConversionResult`.
     Nested zips are handled up to MAX_ARCHIVE_DEPTH levels.
@@ -401,6 +404,8 @@ def convert_archive(path: str, name: str, convert_fn, max_files: int = MAX_ARCHI
     notes: list[str] = []
 
     with tempfile.TemporaryDirectory(prefix="mdzip_") as work, zipfile.ZipFile(path) as zf:
+        if password:
+            zf.setpassword(password.encode())
         members = [
             m for m in zf.infolist()
             if not m.is_dir()
@@ -415,14 +420,22 @@ def convert_archive(path: str, name: str, convert_fn, max_files: int = MAX_ARCHI
             if not target.startswith(root + os.sep):
                 notes.append(f"Skipped unsafe path in archive: {m.filename}")
                 continue
-            zf.extract(m, work)
+            if m.flag_bits & 0x1:  # member is encrypted
+                if not password:
+                    raise doc_password.PasswordRequired(name)
+                try:
+                    zf.extract(m, work)
+                except RuntimeError as exc:
+                    raise doc_password.PasswordRequired(name, wrong=True) from exc
+            else:
+                zf.extract(m, work)
             lines.append(f"---\n\n## 📄 {m.filename}\n")
             entry = {"name": m.filename, "size_bytes": m.file_size, "status": "ok"}
             try:
                 if ext_of(m.filename) in ARCHIVE_EXTS:
                     if _depth + 1 >= MAX_ARCHIVE_DEPTH:
                         raise RuntimeError(f"nested archives deeper than {MAX_ARCHIVE_DEPTH} levels are skipped")
-                    res = convert_archive(target, m.filename, convert_fn, max_files, _depth + 1)
+                    res = convert_archive(target, m.filename, convert_fn, max_files, _depth + 1, password)
                 else:
                     res = convert_fn(target, m.filename)
                 children.append(res)
@@ -519,8 +532,16 @@ def ocr_pages_tesseract(pages: list[str]) -> list[str]:
 
     # The Windows installer does not add Tesseract to PATH; fall back to the
     # default install location so the free OCR mode works out of the box.
-    if shutil.which(pytesseract.pytesseract.tesseract_cmd) is None and os.path.exists(_TESSERACT_DEFAULT_EXE):
-        pytesseract.pytesseract.tesseract_cmd = _TESSERACT_DEFAULT_EXE
+    if shutil.which(pytesseract.pytesseract.tesseract_cmd) is None:
+        if os.path.exists(_TESSERACT_DEFAULT_EXE):
+            pytesseract.pytesseract.tesseract_cmd = _TESSERACT_DEFAULT_EXE
+        else:
+            raise RuntimeError(
+                "Tesseract OCR is not installed. Install it from "
+                "https://github.com/UB-Mannheim/tesseract/wiki (default path "
+                f"{_TESSERACT_DEFAULT_EXE}), or pick a different image mode "
+                "(Claude AI, Llama Vision or Unlimited-OCR)."
+            )
 
     texts = []
     for p in pages:
