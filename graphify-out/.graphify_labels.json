@@ -1,0 +1,14 @@
+{
+  "0": "unlimited_ocr.py",
+  "1": "file_handlers.py",
+  "2": "markitdown_app.py",
+  "3": "output_formatter.py",
+  "4": "whisper_handler.py",
+  "5": "MarkItDown App — Document → Markdown converter (UI by Kshitij)",
+  "6": "_HTMLTextExtractor",
+  "7": "ollama_models.py",
+  "8": "convert_document",
+  "9": "doc_password.py",
+  "10": "os",
+  "11": "CLAUDE.md"
+}

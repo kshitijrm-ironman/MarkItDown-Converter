@@ -1,0 +1,80 @@
+{
+  "file_handlers.py": {
+    "mtime": 1790624840.45534,
+    "seen": 1790625026.740559,
+    "ast_hash": "2a07d03a66e83124fdfb0755a9d11566",
+    "semantic_hash": ""
+  },
+  "markitdown_app.py": {
+    "mtime": 1790624873.7458267,
+    "seen": 1790625026.7405612,
+    "ast_hash": "ef8bd8b39a49df62a811f2290826799d",
+    "semantic_hash": ""
+  },
+  "ollama_models.py": {
+    "mtime": 1790621898.5075812,
+    "seen": 1790625026.7405627,
+    "ast_hash": "ef84485f169cb32fb966b79246e995d4",
+    "semantic_hash": ""
+  },
+  "output_formatter.py": {
+    "mtime": 1789391449.0,
+    "seen": 1790134620.2496505,
+    "ast_hash": "ef090ac0515f2ea91350959ceaa062db",
+    "semantic_hash": "ef090ac0515f2ea91350959ceaa062db"
+  },
+  "unlimited_ocr.py": {
+    "mtime": 1790575111.223138,
+    "seen": 1790625026.7405686,
+    "ast_hash": "de23b01c1fc5a3f4f600bd82cc973cac",
+    "semantic_hash": ""
+  },
+  "whisper_handler.py": {
+    "mtime": 1789403365.0,
+    "seen": 1790134620.249655,
+    "ast_hash": "a0ac64bab1601615d1dff8a140f538e3",
+    "semantic_hash": "a0ac64bab1601615d1dff8a140f538e3"
+  },
+  ".claude/settings.json": {
+    "mtime": 1790134631.8596623,
+    "seen": 1790625026.7405522,
+    "ast_hash": "1a3d59d023b5fe62784b03c0099aae22",
+    "semantic_hash": ""
+  },
+  "doc_password.py": {
+    "mtime": 1790421919.0,
+    "seen": 1790625026.7405562,
+    "ast_hash": "41b9824d66aa664808bd552cf89fd9ef",
+    "semantic_hash": ""
+  },
+  "tools/make_icon.py": {
+    "mtime": 1790423071.0,
+    "seen": 1790625026.7405672,
+    "ast_hash": "4635502ac5f07470d170713d87299220",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1790134631.8586707,
+    "seen": 1790625026.740572,
+    "ast_hash": "8a6643a420fdad6bfb583523bc6cef16",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1789408013.0,
+    "seen": 1790625026.740573,
+    "ast_hash": "a4dee9d87d3a907ff5ffd054b38a42cb",
+    "semantic_hash": ""
+  },
+  "requirements-ocr.txt": {
+    "mtime": 1789391728.0,
+    "seen": 1790625026.7405741,
+    "ast_hash": "f96ad2136854a325d638aef4ac652d6a",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1790422210.0,
+    "seen": 1790625026.7405756,
+    "ast_hash": "3232cbb5e02128d7a092e4fd5d528e1b",
+    "semantic_hash": ""
+  }
+}
