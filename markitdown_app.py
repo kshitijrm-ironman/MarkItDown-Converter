@@ -27,6 +27,48 @@ import ollama_models
 import whisper_handler
 
 # --------------------------------------------------------------------------- #
+# Time-aware theme
+# --------------------------------------------------------------------------- #
+_HOUR_GRADIENTS = {
+    "morning":   "linear-gradient(135deg, #fceabb 0%, #f8b500 100%)",
+    "afternoon": "linear-gradient(135deg, #e0f7ff 0%, #6dd5ed 100%)",
+    "evening":   "linear-gradient(135deg, #ff7e5f 0%, #6a3093 100%)",
+    "night":     "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)",
+}
+
+
+def _daypart(hour: int) -> str:
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 21:
+        return "evening"
+    return "night"
+
+
+def inject_theme() -> None:
+    gradient = _HOUR_GRADIENTS[_daypart(datetime.now().hour)]
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
+    .stApp {{ background: {gradient}; background-attachment: fixed; }}
+    .main .block-container {{
+        animation: mdFadeIn 0.5s ease-in-out;
+        background: rgba(14, 17, 23, 0.72);
+        border-radius: 14px;
+        padding: 1.5rem 2rem;
+    }}
+    @keyframes mdFadeIn {{ from {{ opacity: 0; transform: translateY(6px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+inject_theme()
+
+
+# --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
 DOC_MODE_DEFAULT = fh.DOC_MODE_DEFAULT
@@ -206,6 +248,9 @@ def ollama_model_picker(label: str, key: str, vision: bool, curated: dict[str, s
     installed = vision_models if vision else text_models + vision_models
     kind = "vision" if vision else "text"
 
+    st.caption(f"🟢 Ollama online ({len(models)} model{'s' if len(models) != 1 else ''})" if not err
+               else f"🔴 Ollama offline — {err}")
+
     if installed:
         by_name = {m.name: m for m in installed}
         names = list(by_name)
@@ -235,9 +280,18 @@ def ollama_model_picker(label: str, key: str, vision: bool, curated: dict[str, s
             st.warning(f"⚠️ No local {kind} model found in Ollama. Pull one first, e.g. `ollama pull {preferred}`.")
         render_model_notes(selected, curated)
 
-    if st.button("🔄 Refresh model list", key=f"{key}_refresh", help="Re-read the installed models from Ollama"):
+    c1, c2 = st.columns(2)
+    if c1.button("🔄 Refresh", key=f"{key}_refresh", help="Re-read the installed models from Ollama", use_container_width=True):
         _local_ollama_models.clear()
         st.rerun()
+    if c2.button("🔌 Test connection", key=f"{key}_test", use_container_width=True):
+        try:
+            import ollama
+
+            ollama.chat(model=selected, messages=[{"role": "user", "content": "ping"}], options={"num_predict": 1})
+            st.success(f"✅ {selected} responded.")
+        except Exception as exc:
+            st.warning(f"⚠️ {selected} did not respond: {exc}")
     return selected
 
 
@@ -453,7 +507,7 @@ def convert_image(path: str, name: str, s: dict, prog: StageProgress) -> fh.Conv
 
                 client = OpenAI(api_key=s["anthropic_api_key"], base_url="https://api.anthropic.com/v1/")
                 with st.spinner("🤖 Claude AI is analysing the image..."):
-                    texts = [fh.convert_with_markitdown(p, llm_client=client, llm_model="claude-sonnet-4-6") for p in pages]
+                    texts = [fh.convert_with_markitdown(p, llm_client=client, llm_model="claude-sonnet-5-5") for p in pages]
                 md = texts[0] if len(texts) == 1 else fh.join_pages(texts, name, f"Image Analysis: {name}", "Described by Claude AI")
                 return fh.ConversionResult(md, name, "image")
             except Exception as ai_error:
@@ -570,6 +624,20 @@ def convert_document(path: str, name: str, s: dict, prog: StageProgress) -> tupl
             except Exception as uocr_error:
                 prog.done()
                 st.warning(f"⚠️ Unlimited-OCR failed: {uocr_error}. Falling back to MarkItDown.")
+    if ext == ".pdf" and s.get("pdf_split") and s["doc_mode"] == DOC_MODE_DEFAULT:
+        with open(path, "rb") as f:
+            page_bytes = fh.split_pdf_pages(f.read())
+        n = len(page_bytes)
+        texts = []
+        with tempfile.TemporaryDirectory(prefix="mdpdf_") as work:
+            for i, pb in enumerate(page_bytes, 1):
+                prog.update((i - 1) / n * 90, f"Converting page {i} of {n}...")
+                page_path = os.path.join(work, f"page_{i}.pdf")
+                with open(page_path, "wb") as f:
+                    f.write(pb)
+                texts.append(fh.convert_with_markitdown(page_path))
+        raw = fh.join_pages(texts, name, f"Document: {name}", "Converted page by page with MarkItDown")
+        return fh.ConversionResult(raw, name, "document"), [], False
     with st.spinner("⚡ MarkItDown is converting the document..."):
         raw = fh.convert_with_markitdown(path)
     return fh.ConversionResult(raw, name, "document"), [], False
@@ -719,6 +787,17 @@ if input_mode == "📁 Upload File":
             use_container_width=True, hide_index=True,
         )
 
+        # ---- PDF page handling: ask once per batch if any PDF has >1 page ----
+        pdf_split = False
+        multi_page_pdfs = [f for f in uploaded_files if fh.ext_of(f.name) == ".pdf" and fh.pdf_page_count(f.getvalue()) > 1]
+        if multi_page_pdfs:
+            choice = st.radio(
+                f"Multi-page PDF detected ({', '.join(f.name for f in multi_page_pdfs)}) — how should it be processed?",
+                ["📄 All pages together (one Markdown output)", "🔢 Page by page (labelled Page 1, Page 2, …)"],
+                help="Page-by-page only applies to the default MarkItDown mode — Unlimited-OCR already processes PDFs page by page.",
+            )
+            pdf_split = choice.startswith("🔢")
+
         # ---- Sidebar: image settings (only when an image is in the batch) ----
         if "image" in kinds:
             with st.sidebar:
@@ -781,6 +860,7 @@ if input_mode == "📁 Upload File":
                 whisper_size=whisper_size, whisper_language=whisper_language,
                 password=doc_password_value,
                 mode_label=" · ".join(mode_bits),
+                pdf_split=pdf_split,
             )
             results: list[dict] = []
             total = len(uploaded_files)

@@ -522,6 +522,20 @@ def pdf_page_png(data: bytes, page_index: int, dpi: int = 150) -> bytes:
         return pix.tobytes("png")
 
 
+def split_pdf_pages(data: bytes) -> list[bytes]:
+    """Split a PDF into single-page PDFs (bytes), one per page, in order."""
+    import fitz  # PyMuPDF
+
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        out = []
+        for i in range(doc.page_count):
+            single = fitz.open()
+            single.insert_pdf(doc, from_page=i, to_page=i)
+            out.append(single.tobytes())
+            single.close()
+        return out
+
+
 _TESSERACT_DEFAULT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
