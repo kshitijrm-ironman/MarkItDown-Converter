@@ -168,8 +168,12 @@ def _stop_server() -> None:
     pointing at the store that actually holds this machine's models)."""
     cmd = (["taskkill", "/F", "/IM", "ollama.exe"] if sys.platform == "win32"
            else ["pkill", "-f", "ollama serve"])
+    kwargs: dict = dict(capture_output=True, timeout=3)
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                   | getattr(subprocess, "DETACHED_PROCESS", 0))
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        subprocess.run(cmd, **kwargs)
     except Exception:  # noqa: BLE001
         pass
     time.sleep(1.5)
@@ -226,6 +230,7 @@ class LocalModel:
     context: int | None = None        # tokens
     size_gb: float = 0.0
     capabilities: list[str] = field(default_factory=list)
+    source: str = "ollama"            # "ollama" (live server) or "local" (manual folder scan)
 
     @property
     def base(self) -> str:
@@ -316,6 +321,42 @@ def list_local_models(timeout: float = 3.0) -> tuple[list[LocalModel], str]:
             capabilities=list(m.get("capabilities") or []),
         ))
     models.sort(key=lambda x: x.name.lower())
+    return models, ""
+
+
+def scan_local_model_folder(folder: str) -> tuple[list[LocalModel], str]:
+    """
+    Walk a user-supplied folder (no subprocess, no Ollama service involved)
+    for '.gguf' model files and 'Modelfile' recipes. Returns (models, error);
+    error is "" on success, including the "found nothing" case (callers may
+    treat an empty list as informational rather than fatal).
+    """
+    folder = (folder or "").strip()
+    if not folder:
+        return [], ""
+    if not os.path.isdir(folder):
+        return [], f"Not a folder: {folder}"
+
+    models: list[LocalModel] = []
+    for dirpath, _dirnames, filenames in os.walk(folder):
+        for fname in filenames:
+            lower = fname.lower()
+            if not (lower.endswith(".gguf") or lower == "modelfile"):
+                continue
+            full_path = os.path.join(dirpath, fname)
+            try:
+                size_gb = os.path.getsize(full_path) / 1e9
+            except OSError:
+                size_gb = 0.0
+            models.append(LocalModel(
+                name=full_path,
+                family="modelfile" if lower == "modelfile" else "gguf",
+                size_gb=size_gb,
+                source="local",
+            ))
+    models.sort(key=lambda m: m.name.lower())
+    if not models:
+        return [], f"No .gguf files or Modelfile found under {folder}"
     return models, ""
 
 

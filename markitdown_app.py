@@ -238,33 +238,77 @@ def _local_ollama_models() -> tuple[list[ollama_models.LocalModel], str]:
 def ollama_model_picker(label: str, key: str, vision: bool, curated: dict[str, str], preferred: str) -> str:
     """
     Selectbox over the Ollama models installed on this machine (text or
-    vision), each with a 'best at' note. Falls back to the curated list when
-    the Ollama server is not reachable or has no model of that kind.
+    vision), each with a 'best at' note, plus any models scanned from a
+    manually entered local folder (.gguf files / Modelfile — no Ollama
+    service needed for those). Falls back to the curated list when neither
+    source has a model of that kind.
     """
     models, err = _local_ollama_models()
     text_models, vision_models = ollama_models.split_by_kind(models)
     # Vision models read text fine, so the text picker lists them too (marked),
     # after the pure text models. The vision picker stays vision-only.
-    installed = vision_models if vision else text_models + vision_models
+    installed: list[ollama_models.LocalModel] = vision_models if vision else text_models + vision_models
     kind = "vision" if vision else "text"
 
     st.caption(f"🟢 Ollama online ({len(models)} model{'s' if len(models) != 1 else ''})" if not err
                else f"🔴 Ollama offline — {err}")
 
+    # ---- Manual local model folder (works even with no Ollama service) ----
+    local_models: list[ollama_models.LocalModel] = []
+    with st.expander("📁 Use local model folder instead of Ollama service", expanded=False):
+        manual_path = st.text_input(
+            "Folder with .gguf model files / Modelfile:",
+            key=f"{key}_manual_path",
+            help="Scanned on this machine with a plain folder walk — nothing is run or uploaded.",
+        )
+        if manual_path.strip():
+            local_models, local_err = ollama_models.scan_local_model_folder(manual_path)
+            if local_err:
+                st.warning(f"⚠️ {local_err}")
+            else:
+                st.caption(f"📁 {len(local_models)} local file(s) found")
+
+    if local_models:
+        def _dedupe_key(m: ollama_models.LocalModel) -> str:
+            if m.source == "local":
+                return os.path.splitext(os.path.basename(m.name))[0].lower()
+            return m.base.lower()
+
+        combined: dict[str, ollama_models.LocalModel] = {}
+        for m in installed + local_models:
+            combined.setdefault(_dedupe_key(m), m)
+        installed = list(combined.values())
+
+    sel_model: ollama_models.LocalModel | None = None
     if installed:
         by_name = {m.name: m for m in installed}
         names = list(by_name)
         vision_names = {m.name for m in vision_models}
+
+        def _fmt(n: str) -> str:
+            m = by_name[n]
+            if m.source == "local":
+                return f"{os.path.basename(m.name)} (local path)"
+            return m.label() + (" · vision" if not vision and n in vision_names else "") + " (Ollama)"
+
         # default: the preferred model if pulled (any tag), else the first one
         default = next((n for n in names if n == preferred or n.split(":")[0] == preferred), names[0])
         selected = st.selectbox(
             label, names, index=names.index(default), key=key,
-            format_func=lambda n: by_name[n].label() + (" · vision" if not vision and n in vision_names else ""),
-            help=f"{len(installed)} local {kind} model(s) found in Ollama. Only models installed on this PC are listed.",
+            format_func=_fmt,
+            help=f"{len(installed)} local {kind} model(s) found (Ollama + local folder). Only models present on this PC are listed.",
         )
-        notes = {m.name: ollama_models.note_for(m, curated) for m in installed}
-        st.caption(f"✅ {len(installed)} local {kind} model(s) found in Ollama")
-        render_model_notes(selected, notes, title="What is each installed model best at?")
+        sel_model = by_name[selected]
+        if sel_model.source == "local":
+            st.info(
+                "📁 Local GGUF file selected — ensure Ollama can load it via "
+                "`ollama run <path>`, or use LM Studio / llama.cpp instead. "
+                "It is not auto-launched."
+            )
+        else:
+            notes = {m.name: ollama_models.note_for(m, curated) for m in installed if m.source != "local"}
+            st.caption(f"✅ {len(installed)} local {kind} model(s) found")
+            render_model_notes(selected, notes, title="What is each installed model best at?")
         not_pulled = {k: v for k, v in curated.items() if not any(m.base == k or m.name == k for m in models)}
         if not_pulled:
             with st.expander("⬇️ Other models you could pull", expanded=False):
@@ -284,7 +328,9 @@ def ollama_model_picker(label: str, key: str, vision: bool, curated: dict[str, s
     if c1.button("🔄 Refresh", key=f"{key}_refresh", help="Re-read the installed models from Ollama", use_container_width=True):
         _local_ollama_models.clear()
         st.rerun()
-    if c2.button("🔌 Test connection", key=f"{key}_test", use_container_width=True):
+    if sel_model is not None and sel_model.source == "local":
+        c2.caption("Test connection isn't available for local-path files.")
+    elif c2.button("🔌 Test connection", key=f"{key}_test", use_container_width=True):
         try:
             import ollama
 
@@ -624,9 +670,17 @@ def convert_document(path: str, name: str, s: dict, prog: StageProgress) -> tupl
             except Exception as uocr_error:
                 prog.done()
                 st.warning(f"⚠️ Unlimited-OCR failed: {uocr_error}. Falling back to MarkItDown.")
-    if ext == ".pdf" and s.get("pdf_split") and s["doc_mode"] == DOC_MODE_DEFAULT:
+    if ext == ".pdf" and s["doc_mode"] == DOC_MODE_DEFAULT and (s.get("pdf_split") or s.get("pdf_pages")):
         with open(path, "rb") as f:
-            page_bytes = fh.split_pdf_pages(f.read())
+            pdf_bytes = f.read()
+        requested = s.get("pdf_pages")
+        page_numbers: list[int] | None = None
+        if requested:
+            total_this_file = fh.pdf_page_count(pdf_bytes)
+            page_numbers = [p for p in requested if p <= total_this_file]
+            if not page_numbers:
+                st.warning(f"⚠️ None of the requested pages exist in {name} ({total_this_file} page(s)) — converting all pages instead.")
+        page_bytes = fh.split_pdf_pages(pdf_bytes, pages=page_numbers)
         n = len(page_bytes)
         texts = []
         with tempfile.TemporaryDirectory(prefix="mdpdf_") as work:
@@ -636,7 +690,8 @@ def convert_document(path: str, name: str, s: dict, prog: StageProgress) -> tupl
                 with open(page_path, "wb") as f:
                     f.write(pb)
                 texts.append(fh.convert_with_markitdown(page_path))
-        raw = fh.join_pages(texts, name, f"Document: {name}", "Converted page by page with MarkItDown")
+        byline = f"Converted {n} selected page(s) with MarkItDown" if page_numbers else "Converted page by page with MarkItDown"
+        raw = fh.join_pages(texts, name, f"Document: {name}", byline, page_numbers=page_numbers)
         return fh.ConversionResult(raw, name, "document"), [], False
     with st.spinner("⚡ MarkItDown is converting the document..."):
         raw = fh.convert_with_markitdown(path)
@@ -789,14 +844,29 @@ if input_mode == "📁 Upload File":
 
         # ---- PDF page handling: ask once per batch if any PDF has >1 page ----
         pdf_split = False
+        pdf_pages: list[int] | None = None
         multi_page_pdfs = [f for f in uploaded_files if fh.ext_of(f.name) == ".pdf" and fh.pdf_page_count(f.getvalue()) > 1]
         if multi_page_pdfs:
             choice = st.radio(
                 f"Multi-page PDF detected ({', '.join(f.name for f in multi_page_pdfs)}) — how should it be processed?",
-                ["📄 All pages together (one Markdown output)", "🔢 Page by page (labelled Page 1, Page 2, …)"],
-                help="Page-by-page only applies to the default MarkItDown mode — Unlimited-OCR already processes PDFs page by page.",
+                ["📄 All pages together (one Markdown output)", "🔢 Page by page (labelled Page 1, Page 2, …)", "🎯 Specific pages only"],
+                help="Page-by-page and specific-pages only apply to the default MarkItDown mode — Unlimited-OCR already processes PDFs page by page.",
             )
             pdf_split = choice.startswith("🔢")
+            if choice.startswith("🎯"):
+                max_pages = max(fh.pdf_page_count(f.getvalue()) for f in multi_page_pdfs)
+                pages_input = st.text_input(
+                    f"Enter page numbers (e.g. 1, 3, 5-7) — up to {max_pages}:",
+                    key="pdf_specific_pages_input",
+                )
+                if pages_input.strip():
+                    try:
+                        pdf_pages = fh.parse_page_selection(pages_input, max_pages)
+                        st.caption(f"✅ Selected pages: {', '.join(map(str, pdf_pages))}")
+                    except ValueError as e:
+                        st.error(f"❌ {e}")
+                else:
+                    st.caption("Enter page numbers to select which pages to convert.")
 
         # ---- Sidebar: image settings (only when an image is in the batch) ----
         if "image" in kinds:
@@ -861,6 +931,7 @@ if input_mode == "📁 Upload File":
                 password=doc_password_value,
                 mode_label=" · ".join(mode_bits),
                 pdf_split=pdf_split,
+                pdf_pages=pdf_pages,
             )
             results: list[dict] = []
             total = len(uploaded_files)

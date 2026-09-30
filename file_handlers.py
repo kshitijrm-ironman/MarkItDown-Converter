@@ -522,18 +522,52 @@ def pdf_page_png(data: bytes, page_index: int, dpi: int = 150) -> bytes:
         return pix.tobytes("png")
 
 
-def split_pdf_pages(data: bytes) -> list[bytes]:
-    """Split a PDF into single-page PDFs (bytes), one per page, in order."""
+def split_pdf_pages(data: bytes, pages: list[int] | None = None) -> list[bytes]:
+    """Split a PDF into single-page PDFs (bytes), one per page, in order.
+
+    `pages`, if given, is a list of 1-based page numbers to include (others
+    skipped, out-of-range numbers ignored); default is every page.
+    """
     import fitz  # PyMuPDF
 
     with fitz.open(stream=data, filetype="pdf") as doc:
+        indices = (range(doc.page_count) if pages is None
+                   else [p - 1 for p in pages if 1 <= p <= doc.page_count])
         out = []
-        for i in range(doc.page_count):
+        for i in indices:
             single = fitz.open()
             single.insert_pdf(doc, from_page=i, to_page=i)
             out.append(single.tobytes())
             single.close()
         return out
+
+
+def parse_page_selection(input_str: str, total_pages: int) -> list[int]:
+    """Parse '1, 3, 5-7' into a sorted, deduped list of 1-based page numbers.
+
+    Raises ValueError on empty/garbled input or any number outside 1..total_pages.
+    """
+    pages: set[int] = set()
+    for part in input_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, _, b = part.partition("-")
+            a, b = a.strip(), b.strip()
+            if not (a.isdigit() and b.isdigit()):
+                raise ValueError(f"Invalid range: '{part}'")
+            lo, hi = sorted((int(a), int(b)))
+            pages.update(range(lo, hi + 1))
+        elif part.isdigit():
+            pages.add(int(part))
+        else:
+            raise ValueError(f"Invalid page number: '{part}'")
+    if not pages:
+        raise ValueError("Enter at least one page number.")
+    if max(pages) > total_pages or min(pages) < 1:
+        raise ValueError(f"Page numbers must be between 1 and {total_pages}.")
+    return sorted(pages)
 
 
 _TESSERACT_DEFAULT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -564,15 +598,21 @@ def ocr_pages_tesseract(pages: list[str]) -> list[str]:
     return texts
 
 
-def join_pages(page_texts: list[str], name: str, header: str, byline: str | None = None) -> str:
-    """Combine per-page Markdown into one document (page headings only when > 1 page)."""
+def join_pages(page_texts: list[str], name: str, header: str, byline: str | None = None,
+               page_numbers: list[int] | None = None) -> str:
+    """Combine per-page Markdown into one document (page headings only when > 1 page).
+
+    `page_numbers`, if given, labels each section with its real page number
+    (e.g. for a "specific pages" selection) instead of a 1..N sequence.
+    """
     md = f"# {header}\n\n> Source file: {name}\n\n"
     if byline:
         md += f"> {byline}\n\n"
-    if len(page_texts) == 1:
+    if len(page_texts) == 1 and not page_numbers:
         return md + (page_texts[0] or "_No text found in this image._")
     for i, text in enumerate(page_texts, 1):
-        md += f"## Page {i}\n\n{text or '_No text found on this page._'}\n\n"
+        label = page_numbers[i - 1] if page_numbers else i
+        md += f"## Page {label}\n\n{text or '_No text found on this page._'}\n\n"
         if i < len(page_texts):
             md += "---\n\n"
     return md.rstrip() + "\n"
