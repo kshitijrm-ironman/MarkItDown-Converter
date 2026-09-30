@@ -1,0 +1,38 @@
+{
+  "file_handlers.py": {
+    "mtime": 1789406741.0,
+    "seen": 1790134620.2496383,
+    "ast_hash": "f61d478fdccf2bc7888c1f67744147df",
+    "semantic_hash": "f61d478fdccf2bc7888c1f67744147df"
+  },
+  "markitdown_app.py": {
+    "mtime": 1789416605.0,
+    "seen": 1790134620.2496452,
+    "ast_hash": "1bb4168bf232b4478f6d4acdbd42a444",
+    "semantic_hash": "1bb4168bf232b4478f6d4acdbd42a444"
+  },
+  "ollama_models.py": {
+    "mtime": 1789405227.0,
+    "seen": 1790134620.2496483,
+    "ast_hash": "54dd288f701929e4f712196b9ded3d48",
+    "semantic_hash": "54dd288f701929e4f712196b9ded3d48"
+  },
+  "output_formatter.py": {
+    "mtime": 1789391449.0,
+    "seen": 1790134620.2496505,
+    "ast_hash": "ef090ac0515f2ea91350959ceaa062db",
+    "semantic_hash": "ef090ac0515f2ea91350959ceaa062db"
+  },
+  "unlimited_ocr.py": {
+    "mtime": 1789416578.0,
+    "seen": 1790134620.2496526,
+    "ast_hash": "f5b54d25a9533298ba116005671b4ca6",
+    "semantic_hash": "f5b54d25a9533298ba116005671b4ca6"
+  },
+  "whisper_handler.py": {
+    "mtime": 1789403365.0,
+    "seen": 1790134620.249655,
+    "ast_hash": "a0ac64bab1601615d1dff8a140f538e3",
+    "semantic_hash": "a0ac64bab1601615d1dff8a140f538e3"
+  }
+}

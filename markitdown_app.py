@@ -1,6 +1,13 @@
+import os.path as _p
+
 import streamlit as st
 
-st.set_page_config(page_title="MarkItDown App - UI by Kshitij", page_icon="📝", layout="wide")
+# Browser tab icon: the app logo (assets/logo.png, drawn by tools/make_icon.py),
+# falling back to the emoji if the asset was never generated.
+_LOGO = _p.join(_p.dirname(_p.abspath(__file__)), "assets", "logo.png")
+
+st.set_page_config(page_title="MarkItDown App - UI by Kshitij",
+                   page_icon=_LOGO if _p.exists(_LOGO) else "📝", layout="wide")
 
 import base64
 import io
@@ -12,6 +19,7 @@ from datetime import datetime
 
 import streamlit.components.v1 as components
 
+import doc_password
 import file_handlers as fh
 import output_formatter as fmt
 import unlimited_ocr
@@ -193,17 +201,20 @@ def ollama_model_picker(label: str, key: str, vision: bool, curated: dict[str, s
     """
     models, err = _local_ollama_models()
     text_models, vision_models = ollama_models.split_by_kind(models)
-    installed = vision_models if vision else text_models
+    # Vision models read text fine, so the text picker lists them too (marked),
+    # after the pure text models. The vision picker stays vision-only.
+    installed = vision_models if vision else text_models + vision_models
     kind = "vision" if vision else "text"
 
     if installed:
         by_name = {m.name: m for m in installed}
         names = list(by_name)
+        vision_names = {m.name for m in vision_models}
         # default: the preferred model if pulled (any tag), else the first one
         default = next((n for n in names if n == preferred or n.split(":")[0] == preferred), names[0])
         selected = st.selectbox(
             label, names, index=names.index(default), key=key,
-            format_func=lambda n: by_name[n].label(),
+            format_func=lambda n: by_name[n].label() + (" · vision" if not vision and n in vision_names else ""),
             help=f"{len(installed)} local {kind} model(s) found in Ollama. Only models installed on this PC are listed.",
         )
         notes = {m.name: ollama_models.note_for(m, curated) for m in installed}
@@ -294,6 +305,14 @@ def render_cached(result: dict, fmt_key: str) -> bytes:
 # --------------------------------------------------------------------------- #
 # UI helpers
 # --------------------------------------------------------------------------- #
+def show_failure(name: str, exc: Exception) -> None:
+    """One-line reason in the UI; full traceback tucked into an expander."""
+    import traceback
+    st.error(f"❌ {name}: {exc}")
+    with st.expander("Debug details", expanded=False):
+        st.code("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), language=None)
+
+
 def copy_button(text: str, key: str, label: str = "📋 Copy to clipboard") -> None:
     payload = json.dumps(text).replace("</", "<\\/")
     components.html(
@@ -564,6 +583,9 @@ def dispatch(path: str, name: str, s: dict, prog: StageProgress) -> tuple[fh.Con
     kind = fh.classify(name)
     saved: list[str] = []
     skip_ai = False
+    # Encrypted files are unreadable by every converter below — decrypt the
+    # temp copy first, or raise PasswordRequired so the UI can ask for one.
+    doc_password.unlock_in_place(path, name, s.get("password", ""))
 
     if kind == "image":
         conv = convert_image(path, name, s, prog)
@@ -578,7 +600,8 @@ def dispatch(path: str, name: str, s: dict, prog: StageProgress) -> tuple[fh.Con
     elif kind == "email":
         conv = fh.convert_email(path, name)
     elif kind == "archive":
-        conv = fh.convert_archive(path, name, lambda p, n: dispatch(p, n, s, prog)[0])
+        conv = fh.convert_archive(path, name, lambda p, n: dispatch(p, n, s, prog)[0],
+                                  password=s.get("password", ""))
     else:
         conv, saved, skip_ai = convert_document(path, name, s, prog)
 
@@ -650,6 +673,12 @@ with st.sidebar:
         doc_uocr_available, doc_uocr_detail = render_unlimited_ocr_status()
         st.caption("💡 **Unlimited-OCR** — Best at: scanned / image-only PDFs, dense tables and multi-column layouts. "
                    "Produces true Markdown (headings, tables) instead of a flat text dump. Needs an NVIDIA GPU.")
+
+    st.divider()
+    doc_password_value = st.text_input(
+        "🔒 Document password (optional)", type="password", key="doc_password",
+        help="Only needed for password-protected PDFs, Office files or ZIPs. Never stored.",
+    )
 
 # defaults for conditional settings
 image_mode = IMAGE_MODE_OCR
@@ -750,6 +779,7 @@ if input_mode == "📁 Upload File":
                 image_mode=image_mode, anthropic_api_key=anthropic_api_key, ollama_model=ollama_model,
                 uocr_available=uocr_available, uocr_detail=uocr_detail, uocr_mode=uocr_mode,
                 whisper_size=whisper_size, whisper_language=whisper_language,
+                password=doc_password_value,
                 mode_label=" · ".join(mode_bits),
             )
             results: list[dict] = []
@@ -763,8 +793,16 @@ if input_mode == "📁 Upload File":
                         results.append(result)
                         push_history(result)
                         status.update(label=f"✅ {f.name} — {len(result['markdown']):,} characters", state="complete", expanded=False)
+                    except doc_password.PasswordRequired as exc:
+                        st.warning(
+                            f"🔒 **{f.name}** is password-protected — "
+                            + ("the password you entered is incorrect. "
+                               if exc.wrong else "")
+                            + "Enter the password in the sidebar (**🔒 Document password**) and convert again."
+                        )
+                        status.update(label=f"🔒 {f.name} — password required", state="error", expanded=True)
                     except Exception as exc:
-                        st.error(f"❌ {f.name}: {exc}")
+                        show_failure(f.name, exc)
                         status.update(label=f"❌ {f.name} — failed", state="error", expanded=True)
             overall.empty()
             ss.results = results
@@ -858,7 +896,7 @@ elif input_mode == "🌐 Enter URL":
                         ss.yt_fallback_done = stamp
                         status.update(label=f"✅ {yt_file.name} — {len(result['markdown']):,} characters", state="complete", expanded=False)
                     except Exception as exc:
-                        st.error(f"❌ {yt_file.name}: {exc}")
+                        show_failure(yt_file.name, exc)
                         status.update(label=f"❌ {yt_file.name} — failed", state="error", expanded=True)
 
 

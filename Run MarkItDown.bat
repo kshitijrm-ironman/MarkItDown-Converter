@@ -40,7 +40,13 @@ pause
 exit /b 1
 
 :python_found
-if exist "venv\Scripts\python.exe" goto :venv_ready
+if exist "venv\Scripts\python.exe" (
+    venv\Scripts\python.exe --version >nul 2>&1
+    if not errorlevel 1 goto :venv_ready
+    echo [SETUP] Existing venv is broken ^(moved or Python removed^) - rebuilding...
+    rmdir /s /q venv
+    del /q "%MARKER%" "%OCR_MARKER%" >nul 2>&1
+)
 echo [SETUP] Creating virtual environment (Python 3.12 preferred, falls back to default python)...
 %PY% -m venv venv
 if errorlevel 1 (
@@ -126,6 +132,7 @@ REM browser auto-open below). Port is controlled here only - never in
 REM .streamlit\config.toml - so it cannot conflict with this picker.
 set "PORT_FILE=%TEMP%\markitdown_port.txt"
 set "LAUNCH_LOG=%TEMP%\markitdown_launch.log"
+set "PID_FILE=%TEMP%\markitdown_pid.txt"
 if defined STREAMLIT_SERVER_PORT goto :port_ready
 "%VPY%" -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1]); s.close()" > "%PORT_FILE%" 2>nul
 if errorlevel 1 goto :port_fallback
@@ -140,7 +147,7 @@ del "%PORT_FILE%" >nul 2>&1
 
 :port_ready
 echo.
-echo [LAUNCH] Starting MarkItDown App... (Ctrl+C to stop)
+echo [LAUNCH] Starting MarkItDown App...
 if not defined STREAMLIT_SERVER_PORT goto :launch_default
 
 >"%PORT_FILE%" echo %STREAMLIT_SERVER_PORT%
@@ -151,16 +158,20 @@ REM Background watcher: read the port back from the port file, poll until the
 REM server answers HTTP 200, then open the default browser on that URL.
 REM (config.toml sets server.headless=true so Streamlit itself does not also open one.)
 start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=(Get-Content '%PORT_FILE%').Trim(); $u='http://localhost:'+$p; for($i=0;$i -lt 240;$i++){ try { if((Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 2).StatusCode -eq 200){ Start-Process $u; Add-Content '%LAUNCH_LOG%' ((Get-Date -Format s)+' opened '+$u); exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; Add-Content '%LAUNCH_LOG%' ((Get-Date -Format s)+' gave up waiting for '+$u)"
-"%VPY%" -m streamlit run markitdown_app.py --server.port %STREAMLIT_SERVER_PORT%
+REM Start the server detached with a hidden window and record its PID, so this
+REM console can close instead of sitting there for the whole session.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Start-Process -FilePath '%VPY%' -ArgumentList '-m','streamlit','run','markitdown_app.py','--server.port','%STREAMLIT_SERVER_PORT%' -WorkingDirectory '%CD%' -WindowStyle Hidden -PassThru; Set-Content -Path '%PID_FILE%' -Value $p.Id"
 goto :launched
 
 :launch_default
-echo [INFO] Port unknown - browser will not open automatically; use the URL Streamlit prints below.
+echo [INFO] Port unknown - browser will not open automatically; Streamlit's own
+echo [INFO] URL is written to "%LAUNCH_LOG%".
 echo.
-"%VPY%" -m streamlit run markitdown_app.py
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Start-Process -FilePath '%VPY%' -ArgumentList '-m','streamlit','run','markitdown_app.py' -WorkingDirectory '%CD%' -WindowStyle Hidden -PassThru -RedirectStandardOutput '%LAUNCH_LOG%'; Set-Content -Path '%PID_FILE%' -Value $p.Id"
 
 :launched
 echo.
-echo [INFO] App closed.
-pause
+echo [INFO] MarkItDown is running in the background - no console window needed.
+echo [INFO] Close it any time with "Stop MarkItDown.bat".
 endlocal
+exit /b 0

@@ -146,8 +146,12 @@ def _from_pretrained(loader, **kwargs):
     """
     try:
         return loader(MODEL_ID, local_files_only=True, **kwargs)
-    except OSError:
+    except (OSError, ValueError):
         # Not in the cache yet (first run) — download from the Hub.
+        # ValueError too: with a half-populated cache (config.json + remote code
+        # present, tokenizer files missing) AutoTokenizer does not raise OSError,
+        # it falls back to the config-class table and raises
+        # "Unrecognized configuration class UnlimitedOCRConfig ... AutoTokenizer".
         return loader(MODEL_ID, **kwargs)
 
 
