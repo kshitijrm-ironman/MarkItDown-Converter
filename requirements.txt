@@ -1,25 +1,34 @@
 # Base dependencies for the MarkItDown app.
 # Optional GPU extras (Unlimited-OCR + faster-whisper) live in requirements-ocr.txt.
-streamlit
-markitdown[all]
-wikipedia-api
-pytesseract
-pillow
-ollama
-anthropic
-openai
-requests
-playwright
+#
+# Verified on: Python 3.13.6 (win32) with the exact versions in requirements.lock.
+# Floors below are the versions this app was tested against — upgrades stay
+# possible, downgrades do not. For a byte-identical environment use:
+#     pip install -r requirements.lock
+streamlit>=1.64.0          # 2.x untested — see compatibility report before bumping
+markitdown[all]>=0.1.8
+wikipedia-api>=0.16.0
+pytesseract>=0.3.13
+pillow>=12.3.0
+ollama>=0.6.2
+anthropic>=1.8.0
+openai>=3.19.2
+requests>=2.34.2
+playwright>=1.63.0
 youtube-transcript-api>=1.2.4   # 1.0.x breaks on YouTube's 2025 caption format (ParseError)
 
 # File-type handlers (file_handlers.py)
-python-pptx          # .pptx
-pandas               # .xlsx / .csv
-openpyxl             # xlsx engine for pandas
-pillow-heif          # .heic / .heif images
-pymupdf              # PDF preview: rasterise pages to PNG (Chrome blocks PDF iframes)
+python-pptx>=1.0.2          # .pptx
+pandas>=3.0.6               # .xlsx / .csv
+openpyxl>=3.1.5             # xlsx engine for pandas
+pillow-heif>=1.8.0          # .heic / .heif images
+pymupdf>=1.27.2             # PDF preview + unlocking password-protected PDFs
+msoffcrypto-tool>=6.0.0     # unlock password-protected Office files (doc_password.py)
 
 # Output formats (output_formatter.py)
-markdown             # .html (and the base for .txt / .pdf)
-python-docx          # .docx
-fpdf2                # .pdf
+markdown>=3.11              # .html (and the base for .txt / .pdf)
+python-docx>=1.2.0          # .docx
+fpdf2>=2.8.8                # .pdf
+
+# Tests (tests/test_pure_functions.py)
+pytest>=8.0
